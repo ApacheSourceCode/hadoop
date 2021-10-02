@@ -410,6 +410,12 @@ public final class Constants {
   public static final String CANNED_ACL = "fs.s3a.acl.default";
   public static final String DEFAULT_CANNED_ACL = "";
 
+  /**
+   * Content encoding: gzip, deflate, compress, br, etc.
+   * Value {@value}.
+   */
+  public static final String CONTENT_ENCODING = "fs.s3a.object.content.encoding";
+
   // should we try to purge old multipart uploads when starting up
   public static final String PURGE_EXISTING_MULTIPART =
       "fs.s3a.multipart.purge";
@@ -1122,4 +1128,8 @@ public final class Constants {
    */
   public static final String AWS_S3_CENTRAL_REGION = "us-east-1";
 
+  /**
+   * Require that all S3 access is made through Access Points.
+   */
+  public static final String AWS_S3_ACCESSPOINT_REQUIRED = "fs.s3a.accesspoint.required";
 }
