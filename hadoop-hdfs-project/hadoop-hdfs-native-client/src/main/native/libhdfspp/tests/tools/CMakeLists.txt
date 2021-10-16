@@ -16,7 +16,25 @@
 # limitations under the License.
 #
 
-add_executable(hdfs_tool_test hdfs-allow-snapshot-mock.cc hdfs-cat-mock.cc hdfs-tool-test.cc main.cc)
-target_include_directories(hdfs_tool_test PRIVATE ../tools ../../tools ../../tools/hdfs-allow-snapshot ../../tools/hdfs-cat)
-target_link_libraries(hdfs_tool_test PRIVATE gmock_main hdfs_allowSnapshot_lib hdfs_cat_lib)
-add_test(hdfs_tool_test hdfs_tool_test)
+add_executable(hdfs_tool_tests
+                hdfs-allow-snapshot-mock.cc
+                hdfs-delete-snapshot-mock.cc
+                hdfs-cat-mock.cc
+                hdfs-tool-test-fixtures.cc
+                hdfs-tool-tests.cc
+                hdfs-df-mock.cc
+                main.cc)
+target_include_directories(hdfs_tool_tests PRIVATE
+                            ../tools
+                            ../../tools
+                            ../../tools/hdfs-df
+                            ../../tools/hdfs-allow-snapshot
+                            ../../tools/hdfs-delete-snapshot
+                            ../../tools/hdfs-cat)
+target_link_libraries(hdfs_tool_tests PRIVATE
+                       gmock_main
+                       hdfs_df_lib
+                       hdfs_allowSnapshot_lib
+                       hdfs_deleteSnapshot_lib
+                       hdfs_cat_lib)
+add_test(hdfs_tool_tests hdfs_tool_tests)

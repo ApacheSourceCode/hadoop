@@ -341,7 +341,7 @@ import org.apache.log4j.Appender;
 import org.apache.log4j.AsyncAppender;
 import org.eclipse.jetty.util.ajax.JSON;
 
-import org.apache.hadoop.thirdparty.com.google.common.annotations.VisibleForTesting;
+import org.apache.hadoop.classification.VisibleForTesting;
 import org.apache.hadoop.thirdparty.com.google.common.base.Charsets;
 import org.apache.hadoop.thirdparty.com.google.common.base.Preconditions;
 import org.apache.hadoop.thirdparty.com.google.common.collect.ImmutableMap;
@@ -1458,8 +1458,11 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
     LOG.info("Stopping services started for active state");
     writeLock();
     try {
-      if (blockManager != null && blockManager.getSPSManager() != null) {
-        blockManager.getSPSManager().stop();
+      if (blockManager != null) {
+        blockManager.stopReconstructionInitializer();
+        if (blockManager.getSPSManager() != null) {
+          blockManager.getSPSManager().stop();
+        }
       }
       stopSecretManager();
       leaseManager.stopMonitor();
@@ -2719,11 +2722,10 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
       iip = FSDirWriteFileOp.resolvePathForStartFile(
           dir, pc, src, flag, createParent);
 
-
       if (blockSize < minBlockSize) {
-        throw new IOException("Specified block size is less than configured" +
-            " minimum value (" + DFSConfigKeys.DFS_NAMENODE_MIN_BLOCK_SIZE_KEY
-            + "): " + blockSize + " < " + minBlockSize);
+        throw new IOException("Specified block size " + blockSize +
+            " is less than configured minimum value " +
+            DFSConfigKeys.DFS_NAMENODE_MIN_BLOCK_SIZE_KEY + "=" + minBlockSize);
       }
 
       if (shouldReplicate) {
