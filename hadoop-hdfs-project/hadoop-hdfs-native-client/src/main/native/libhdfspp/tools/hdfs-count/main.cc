@@ -15,35 +15,38 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.hadoop.fs.viewfs;
 
-import java.io.IOException;
-import java.net.URI;
+#include <cstdlib>
+#include <exception>
+#include <iostream>
 
-import org.apache.hadoop.classification.InterfaceAudience;
-import org.apache.hadoop.classification.InterfaceStability;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FileSystem;
+#include <google/protobuf/stubs/common.h>
 
-/**
- * File system instance getter.
- */
-@InterfaceAudience.LimitedPrivate({"Common"})
-@InterfaceStability.Unstable
-public class FsGetter {
+#include "hdfs-count.h"
 
-  /**
-   * Gets new file system instance of given uri.
-   */
-  public FileSystem getNewInstance(URI uri, Configuration conf)
-      throws IOException {
-    return FileSystem.newInstance(uri, conf);
+int main(int argc, char *argv[]) {
+  const auto result = std::atexit([]() -> void {
+    // Clean up static data on exit and prevent valgrind memory leaks
+    google::protobuf::ShutdownProtobufLibrary();
+  });
+  if (result != 0) {
+    std::cerr << "Error: Unable to schedule clean-up tasks for HDFS count "
+                 "tool, exiting"
+              << std::endl;
+    std::exit(EXIT_FAILURE);
   }
 
-  /**
-   * Gets file system instance of given uri.
-   */
-  public FileSystem get(URI uri, Configuration conf) throws IOException {
-    return FileSystem.get(uri, conf);
+  hdfs::tools::Count count(argc, argv);
+  auto success = false;
+
+  try {
+    success = count.Do();
+  } catch (const std::exception &e) {
+    std::cerr << "Error: " << e.what() << std::endl;
   }
+
+  if (!success) {
+    std::exit(EXIT_FAILURE);
+  }
+  return 0;
 }
