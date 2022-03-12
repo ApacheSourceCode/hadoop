@@ -16,25 +16,10 @@
  * limitations under the License.
  */
 
-package org.apache.hadoop.yarn.server.resourcemanager.scheduler.policy;
+#include "hdfs-get.h"
 
-import java.util.*;
+namespace hdfs::tools {
+Get::Get(const int argc, char **argv) : CopyToLocal(argc, argv) {}
 
-/**
- * A Comparator which orders SchedulableEntities by input order
- */
-public class FifoComparator 
-    implements Comparator<SchedulableEntity> {
-      
-    @Override
-  public int compare(SchedulableEntity r1, SchedulableEntity r2) {
-    int res = r1.compareInputOrderTo(r2);
-
-    if (res == 0) {
-      res = (int) Math.signum(r1.getStartTime() - r2.getStartTime());
-    }
-
-    return res;
-  }
-}
-
+std::string Get::GetToolName() const { return "get"; }
+} // namespace hdfs::tools
