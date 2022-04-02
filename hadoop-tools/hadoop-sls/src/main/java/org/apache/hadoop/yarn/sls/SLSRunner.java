@@ -18,16 +18,11 @@
 package org.apache.hadoop.yarn.sls;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.Reader;
-import java.nio.charset.StandardCharsets;
 import java.security.Security;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Random;
@@ -37,10 +32,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-
-import com.fasterxml.jackson.core.JsonFactory;
-import com.fasterxml.jackson.databind.JavaType;
-import com.fasterxml.jackson.databind.ObjectMapper;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
@@ -53,89 +44,48 @@ import org.apache.hadoop.classification.InterfaceAudience.Private;
 import org.apache.hadoop.classification.InterfaceStability.Unstable;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
-import org.apache.hadoop.fs.CommonConfigurationKeysPublic;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.metrics2.source.JvmMetrics;
-import org.apache.hadoop.net.DNSToSwitchMapping;
-import org.apache.hadoop.net.TableMapping;
 import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
 import org.apache.hadoop.yarn.api.records.NodeId;
 import org.apache.hadoop.yarn.api.records.NodeLabel;
-import org.apache.hadoop.yarn.api.records.NodeState;
 import org.apache.hadoop.yarn.api.records.Resource;
 import org.apache.hadoop.yarn.api.records.ResourceInformation;
-import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.exceptions.YarnException;
-import org.apache.hadoop.yarn.server.resourcemanager.ResourceManager;
-import org.apache.hadoop.yarn.server.resourcemanager.amlauncher.ApplicationMasterLauncher;
-import org.apache.hadoop.yarn.server.resourcemanager.monitor.capacity.ProportionalCapacityPreemptionPolicy;
-import org.apache.hadoop.yarn.server.resourcemanager.rmnode.RMNode;
-import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.CapacityScheduler;
-import org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair.FairScheduler;
-import org.apache.hadoop.yarn.server.resourcemanager.scheduler.fifo.FifoScheduler;
 import org.apache.hadoop.yarn.sls.appmaster.AMSimulator;
 import org.apache.hadoop.yarn.sls.conf.SLSConfiguration;
 import org.apache.hadoop.yarn.sls.nodemanager.NMSimulator;
-import org.apache.hadoop.yarn.sls.resourcemanager.MockAMLauncher;
-import org.apache.hadoop.yarn.sls.scheduler.SLSCapacityScheduler;
-import org.apache.hadoop.yarn.sls.scheduler.SLSFairScheduler;
-import org.apache.hadoop.yarn.sls.scheduler.SchedulerMetrics;
 import org.apache.hadoop.yarn.sls.scheduler.SchedulerWrapper;
 import org.apache.hadoop.yarn.sls.scheduler.TaskRunner;
+import org.apache.hadoop.yarn.sls.scheduler.Tracker;
 import org.apache.hadoop.yarn.sls.synthetic.SynthTraceJobProducer;
-import org.apache.hadoop.yarn.sls.utils.SLSUtils;
-import org.apache.hadoop.yarn.util.resource.ResourceUtils;
 import org.apache.hadoop.yarn.util.resource.Resources;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.File;
-import java.io.IOException;
-import java.security.Security;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Random;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-
 @Private
 @Unstable
 public class SLSRunner extends Configured implements Tool {
-  // RM, Runner
-  private ResourceManager rm;
-  private static TaskRunner runner = new TaskRunner();
+  private static final TaskRunner runner = new TaskRunner();
   private String[] inputTraces;
-  private Map<String, Integer> queueAppNumMap;
-  private int poolSize;
-
-  // NM simulator
-  private Map<NodeId, NMSimulator> nmMap;
-  private Resource nodeManagerResource;
-  private String nodeFile;
 
   // metrics
-  private String metricsOutputDir;
   private boolean printSimulation;
 
-  // other simulation information
-  private int numNMs, numRacks;
-  private String tableMapping;
-
-  private final static Map<String, Object> simulateInfoMap = new HashMap<>();
+  private final static Map<String, Object> simulateInfoMap =
+      new HashMap<>();
 
   // logger
   public final static Logger LOG = LoggerFactory.getLogger(SLSRunner.class);
 
   private static boolean exitAtTheFinish = false;
   private AMRunner amRunner;
+  private RMRunner rmRunner;
+  private NMRunner nmRunner;
+
+  private TraceType inputType;
+  private SynthTraceJobProducer stjp;
 
   /**
    * The type of trace in input.
@@ -148,19 +98,16 @@ public class SLSRunner extends Configured implements Tool {
   public static final String NETWORK_NEGATIVE_CACHE_TTL =
       "networkaddress.cache.negative.ttl";
 
-  private TraceType inputType;
-  private SynthTraceJobProducer stjp;
-
-  public static int getRemainingApps() {
-    return AMRunner.REMAINING_APPS;
+  public int getRemainingApps() {
+    return amRunner.remainingApps;
   }
 
-  public SLSRunner() throws ClassNotFoundException {
+  public SLSRunner() throws ClassNotFoundException, YarnException {
     Configuration tempConf = new Configuration(false);
     init(tempConf);
   }
 
-  public SLSRunner(Configuration tempConf) throws ClassNotFoundException {
+  public SLSRunner(Configuration tempConf) throws ClassNotFoundException, YarnException {
     init(tempConf);
   }
 
@@ -174,42 +121,31 @@ public class SLSRunner extends Configured implements Tool {
     super.setConf(conf);
   }
 
-  private void init(Configuration tempConf) throws ClassNotFoundException {
-    nmMap = new ConcurrentHashMap<>();
-    queueAppNumMap = new HashMap<>();
-    amRunner = new AMRunner(runner, this);
+  private void init(Configuration tempConf) throws ClassNotFoundException, YarnException {
     // runner configuration
     setConf(tempConf);
-
-    // runner
-    poolSize = tempConf.getInt(SLSConfiguration.RUNNER_POOL_SIZE,
+    
+    int poolSize = tempConf.getInt(SLSConfiguration.RUNNER_POOL_SIZE,
         SLSConfiguration.RUNNER_POOL_SIZE_DEFAULT);
     SLSRunner.runner.setQueueSize(poolSize);
 
+    rmRunner = new RMRunner(getConf(), this);
+    nmRunner = new NMRunner(runner, getConf(), rmRunner.getRm(), rmRunner.getTableMapping(), poolSize);
+    amRunner = new AMRunner(runner, this);
     amRunner.init(tempConf);
-    nodeManagerResource = getNodeManagerResource();
   }
 
-  private Resource getNodeManagerResource() {
-    Resource resource = Resources.createResource(0);
-    ResourceInformation[] infors = ResourceUtils.getResourceTypesArray();
-    for (ResourceInformation info : infors) {
-      long value;
-      if (info.getName().equals(ResourceInformation.MEMORY_URI)) {
-        value = getConf().getInt(SLSConfiguration.NM_MEMORY_MB,
-            SLSConfiguration.NM_MEMORY_MB_DEFAULT);
-      } else if (info.getName().equals(ResourceInformation.VCORES_URI)) {
-        value = getConf().getInt(SLSConfiguration.NM_VCORES,
-            SLSConfiguration.NM_VCORES_DEFAULT);
-      } else {
-        value = getConf().getLong(SLSConfiguration.NM_PREFIX +
-            info.getName(), SLSConfiguration.NM_RESOURCE_DEFAULT);
+  private SynthTraceJobProducer getSynthJobTraceProducer() throws YarnException {
+    // if we use the nodeFile this could have been not initialized yet.
+    if (nmRunner.getStjp() != null) {
+      return nmRunner.getStjp();
+    } else {
+      try {
+        return new SynthTraceJobProducer(getConf(), new Path(inputTraces[0]));
+      } catch (IOException e) {
+        throw new YarnException("Failed to initialize SynthTraceJobProducer", e);
       }
-
-      resource.setResourceValue(info.getName(), value);
     }
-
-    return resource;
   }
 
   /**
@@ -221,49 +157,61 @@ public class SLSRunner extends Configured implements Tool {
 
   /**
    * This is invoked before start.
-   * @param inType
-   * @param inTraces
-   * @param nodes
-   * @param outDir
-   * @param trackApps
-   * @param printsimulation
+   * @param inputType The trace type
+   * @param inTraces Input traces
+   * @param nodes The node file
+   * @param metricsOutputDir Output dir for metrics
+   * @param trackApps Track these applications
+   * @param printSimulation Whether to print the simulation
    */
-  public void setSimulationParams(TraceType inType, String[] inTraces,
-      String nodes, String outDir, Set<String> trackApps,
-      boolean printsimulation) {
-
-    this.inputType = inType;
+  public void setSimulationParams(TraceType inputType, String[] inTraces,
+      String nodes, String metricsOutputDir, Set<String> trackApps,
+      boolean printSimulation) throws YarnException {
+    this.inputType = inputType;
     this.inputTraces = inTraces.clone();
-    this.amRunner.setInputType(this.inputType);
+    this.amRunner.setInputType(inputType);
     this.amRunner.setInputTraces(this.inputTraces);
     this.amRunner.setTrackedApps(trackApps);
-    this.nodeFile = nodes;
-    this.printSimulation = printsimulation;
-    metricsOutputDir = outDir;
-    tableMapping = outDir + "/tableMapping.csv";
+    this.nmRunner.setNodeFile(nodes);
+    this.nmRunner.setInputType(inputType);
+    this.nmRunner.setInputTraces(this.inputTraces);
+    this.printSimulation = printSimulation;
+    this.rmRunner.setMetricsOutputDir(metricsOutputDir);
+    String tableMapping = metricsOutputDir + "/tableMapping.csv";
+    this.rmRunner.setTableMapping(tableMapping);
+    this.nmRunner.setTableMapping(tableMapping);
+    
+    //We need this.inputTraces to set before creating SynthTraceJobProducer
+    if (inputType == TraceType.SYNTH) {
+      this.stjp = getSynthJobTraceProducer();
+    }
   }
 
   public void start() throws IOException, ClassNotFoundException, YarnException,
       InterruptedException {
-
     enableDNSCaching(getConf());
 
     // start resource manager
-    startRM();
-    amRunner.setResourceManager(rm);
+    rmRunner.startRM();
+    nmRunner.setRm(rmRunner.getRm());
+    amRunner.setResourceManager(rmRunner.getRm());
+    
     // start node managers
-    startNM();
+    nmRunner.startNM();
     // start application masters
     amRunner.startAM();
+
     // set queue & tracked apps information
-    ((SchedulerWrapper) rm.getResourceScheduler()).getTracker()
-        .setQueueSet(this.queueAppNumMap.keySet());
-    ((SchedulerWrapper) rm.getResourceScheduler()).getTracker()
-        .setTrackedAppSet(amRunner.getTrackedApps());
+    SchedulerWrapper resourceScheduler =
+        (SchedulerWrapper) rmRunner.getRm().getResourceScheduler();
+    resourceScheduler.setSLSRunner(this);
+    Tracker tracker = resourceScheduler.getTracker();
+    tracker.setQueueSet(rmRunner.getQueueAppNumMap().keySet());
+    tracker.setTrackedAppSet(amRunner.getTrackedApps());
     // print out simulation info
     printSimulationInfo();
     // blocked until all nodes RUNNING
-    waitForNodesRunning();
+    nmRunner.waitForNodesRunning();
     // starting the runner once everything is ready to go,
     runner.start();
   }
@@ -285,147 +233,6 @@ public class SLSRunner extends Configured implements Tool {
     }
   }
 
-  private void startRM() throws ClassNotFoundException, YarnException {
-    Configuration rmConf = new YarnConfiguration(getConf());
-    String schedulerClass = rmConf.get(YarnConfiguration.RM_SCHEDULER);
-
-    if (Class.forName(schedulerClass) == CapacityScheduler.class) {
-      rmConf.set(YarnConfiguration.RM_SCHEDULER,
-          SLSCapacityScheduler.class.getName());
-      rmConf.setBoolean(YarnConfiguration.RM_SCHEDULER_ENABLE_MONITORS, true);
-      rmConf.set(YarnConfiguration.RM_SCHEDULER_MONITOR_POLICIES,
-          ProportionalCapacityPreemptionPolicy.class.getName());
-    } else if (Class.forName(schedulerClass) == FairScheduler.class) {
-      rmConf.set(YarnConfiguration.RM_SCHEDULER,
-          SLSFairScheduler.class.getName());
-    } else if (Class.forName(schedulerClass) == FifoScheduler.class) {
-      // TODO add support for FifoScheduler
-      throw new YarnException("Fifo Scheduler is not supported yet.");
-    }
-    rmConf.setClass(
-        CommonConfigurationKeysPublic.NET_TOPOLOGY_NODE_SWITCH_MAPPING_IMPL_KEY,
-        TableMapping.class, DNSToSwitchMapping.class);
-    rmConf.set(
-        CommonConfigurationKeysPublic.NET_TOPOLOGY_TABLE_MAPPING_FILE_KEY,
-        tableMapping);
-    rmConf.set(SLSConfiguration.METRICS_OUTPUT_DIR, metricsOutputDir);
-
-    final SLSRunner se = this;
-    rm = new ResourceManager() {
-      @Override
-      protected ApplicationMasterLauncher createAMLauncher() {
-        return new MockAMLauncher(se, this.rmContext);
-      }
-    };
-
-    // Across runs of parametrized tests, the JvmMetrics objects is retained,
-    // but is not registered correctly
-    JvmMetrics jvmMetrics = JvmMetrics.initSingleton("ResourceManager", null);
-    jvmMetrics.registerIfNeeded();
-
-    // Init and start the actual ResourceManager
-    rm.init(rmConf);
-    rm.start();
-  }
-
-  private void startNM() throws YarnException, IOException,
-      InterruptedException {
-    // nm configuration
-    int heartbeatInterval = getConf().getInt(
-        SLSConfiguration.NM_HEARTBEAT_INTERVAL_MS,
-        SLSConfiguration.NM_HEARTBEAT_INTERVAL_MS_DEFAULT);
-    float resourceUtilizationRatio = getConf().getFloat(
-        SLSConfiguration.NM_RESOURCE_UTILIZATION_RATIO,
-        SLSConfiguration.NM_RESOURCE_UTILIZATION_RATIO_DEFAULT);
-    // nm information (fetch from topology file, or from sls/rumen json file)
-    Set<NodeDetails> nodeSet = null;
-    if (nodeFile.isEmpty()) {
-      for (String inputTrace : inputTraces) {
-        switch (inputType) {
-        case SLS:
-          nodeSet = SLSUtils.parseNodesFromSLSTrace(inputTrace);
-          break;
-        case RUMEN:
-          nodeSet = SLSUtils.parseNodesFromRumenTrace(inputTrace);
-          break;
-        case SYNTH:
-          stjp = new SynthTraceJobProducer(getConf(), new Path(inputTraces[0]));
-          nodeSet = SLSUtils.generateNodes(stjp.getNumNodes(),
-              stjp.getNumNodes()/stjp.getNodesPerRack());
-          break;
-        default:
-          throw new YarnException("Input configuration not recognized, "
-              + "trace type should be SLS, RUMEN, or SYNTH");
-        }
-      }
-    } else {
-      nodeSet = SLSUtils.parseNodesFromNodeFile(nodeFile,
-          nodeManagerResource);
-    }
-
-    if (nodeSet == null || nodeSet.isEmpty()) {
-      throw new YarnException("No node! Please configure nodes.");
-    }
-
-    SLSUtils.generateNodeTableMapping(nodeSet, tableMapping);
-
-    // create NM simulators
-    Random random = new Random();
-    Set<String> rackSet = ConcurrentHashMap.newKeySet();
-    int threadPoolSize = Math.max(poolSize,
-        SLSConfiguration.RUNNER_POOL_SIZE_DEFAULT);
-    ExecutorService executorService = Executors.
-        newFixedThreadPool(threadPoolSize);
-    for (NodeDetails nodeDetails : nodeSet) {
-      executorService.submit(new Runnable() {
-        @Override public void run() {
-          try {
-            // we randomize the heartbeat start time from zero to 1 interval
-            NMSimulator nm = new NMSimulator();
-            Resource nmResource = nodeManagerResource;
-            String hostName = nodeDetails.getHostname();
-            if (nodeDetails.getNodeResource() != null) {
-              nmResource = nodeDetails.getNodeResource();
-            }
-            Set<NodeLabel> nodeLabels = nodeDetails.getLabels();
-            nm.init(hostName, nmResource,
-                random.nextInt(heartbeatInterval),
-                heartbeatInterval, rm, resourceUtilizationRatio, nodeLabels);
-            nmMap.put(nm.getNode().getNodeID(), nm);
-            runner.schedule(nm);
-            rackSet.add(nm.getNode().getRackName());
-          } catch (IOException | YarnException e) {
-            LOG.error("Got an error while adding node", e);
-          }
-        }
-      });
-    }
-    executorService.shutdown();
-    executorService.awaitTermination(10, TimeUnit.MINUTES);
-    numRacks = rackSet.size();
-    numNMs = nmMap.size();
-  }
-
-  private void waitForNodesRunning() throws InterruptedException {
-    long startTimeMS = System.currentTimeMillis();
-    while (true) {
-      int numRunningNodes = 0;
-      for (RMNode node : rm.getRMContext().getRMNodes().values()) {
-        if (node.getState() == NodeState.RUNNING) {
-          numRunningNodes++;
-        }
-      }
-      if (numRunningNodes == numNMs) {
-        break;
-      }
-      LOG.info("SLSRunner is waiting for all nodes RUNNING."
-          + " {} of {} NMs initialized.", numRunningNodes, numNMs);
-      Thread.sleep(1000);
-    }
-    LOG.info("SLSRunner takes {} ms to launch all nodes.",
-        System.currentTimeMillis() - startTimeMS);
-  }
-
   Resource getDefaultContainerResource() {
     int containerMemory = getConf().getInt(SLSConfiguration.CONTAINER_MEMORY_MB,
         SLSConfiguration.CONTAINER_MEMORY_MB_DEFAULT);
@@ -434,21 +241,8 @@ public class SLSRunner extends Configured implements Tool {
     return Resources.createResource(containerMemory, containerVCores);
   }
 
-  void increaseQueueAppNum(String queue) throws YarnException {
-    SchedulerWrapper wrapper = (SchedulerWrapper)rm.getResourceScheduler();
-    String queueName = wrapper.getRealQueueName(queue);
-    Integer appNum = queueAppNumMap.get(queueName);
-    if (appNum == null) {
-      appNum = 1;
-    } else {
-      appNum = appNum + 1;
-    }
-
-    queueAppNumMap.put(queueName, appNum);
-    SchedulerMetrics metrics = wrapper.getSchedulerMetrics();
-    if (metrics != null) {
-      metrics.trackQueue(queueName);
-    }
+  public void increaseQueueAppNum(String queue) throws YarnException {
+    rmRunner.increaseQueueAppNum(queue);
   }
 
   private void printSimulationInfo() {
@@ -456,13 +250,14 @@ public class SLSRunner extends Configured implements Tool {
     final int numTasks = amRunner.getNumTasks();
     final long maxRuntime = amRunner.getMaxRuntime();
     Map<String, AMSimulator> amMap = amRunner.getAmMap();
+    Map<String, Integer> queueAppNumMap = rmRunner.getQueueAppNumMap();
 
     if (printSimulation) {
       // node
       LOG.info("------------------------------------");
       LOG.info("# nodes = {}, # racks = {}, capacity " +
               "of each node {}.",
-              numNMs, numRacks, nodeManagerResource);
+              nmRunner.getNumNMs(), nmRunner.getNumRacks(), nmRunner.getNodeManagerResource());
       LOG.info("------------------------------------");
       // job
       LOG.info("# applications = {}, # total " +
@@ -486,12 +281,12 @@ public class SLSRunner extends Configured implements Tool {
       LOG.info("------------------------------------");
     }
     // package these information in the simulateInfoMap used by other places
-    simulateInfoMap.put("Number of racks", numRacks);
-    simulateInfoMap.put("Number of nodes", numNMs);
+    simulateInfoMap.put("Number of racks", nmRunner.getNumRacks());
+    simulateInfoMap.put("Number of nodes", nmRunner.getNumNMs());
     simulateInfoMap.put("Node memory (MB)",
-        nodeManagerResource.getResourceValue(ResourceInformation.MEMORY_URI));
+        nmRunner.getNodeManagerResource().getResourceValue(ResourceInformation.MEMORY_URI));
     simulateInfoMap.put("Node VCores",
-        nodeManagerResource.getResourceValue(ResourceInformation.VCORES_URI));
+        nmRunner.getNodeManagerResource().getResourceValue(ResourceInformation.VCORES_URI));
     simulateInfoMap.put("Number of applications", numAMs);
     simulateInfoMap.put("Number of tasks", numTasks);
     simulateInfoMap.put("Average tasks per applicaion",
@@ -504,12 +299,12 @@ public class SLSRunner extends Configured implements Tool {
   }
 
   public Map<NodeId, NMSimulator> getNmMap() {
-    return nmMap;
+    return nmRunner.getNmMap();
   }
 
-  public static void decreaseRemainingApps() {
-    AMRunner.REMAINING_APPS--;
-    if (AMRunner.REMAINING_APPS == 0) {
+  public void decreaseRemainingApps() {
+    amRunner.remainingApps--;
+    if (amRunner.remainingApps == 0) {
       exitSLSRunner();
     }
   }
@@ -522,13 +317,12 @@ public class SLSRunner extends Configured implements Tool {
   }
 
   public void stop() throws InterruptedException {
-    rm.stop();
+    rmRunner.stop();
     runner.stop();
   }
 
   public int run(final String[] argv) throws IOException, InterruptedException,
       ParseException, ClassNotFoundException, YarnException {
-
     Options options = new Options();
 
     // Left for compatibility
@@ -549,24 +343,15 @@ public class SLSRunner extends Configured implements Tool {
     CommandLineParser parser = new GnuParser();
     CommandLine cmd = parser.parse(options, argv);
 
-    String traceType = null;
-    String traceLocation = null;
-
     // compatibility with old commandline
-    if (cmd.hasOption("inputrumen")) {
-      traceType = "RUMEN";
-      traceLocation = cmd.getOptionValue("inputrumen");
-    }
-    if (cmd.hasOption("inputsls")) {
-      traceType = "SLS";
-      traceLocation = cmd.getOptionValue("inputsls");
-    }
-
-    if (cmd.hasOption("tracetype")) {
-      traceType = cmd.getOptionValue("tracetype");
-      traceLocation = cmd.getOptionValue("tracelocation");
-    }
-
+    boolean hasInputRumenOption = cmd.hasOption("inputrumen");
+    boolean hasInputSlsOption = cmd.hasOption("inputsls");
+    boolean hasTraceTypeOption = cmd.hasOption("tracetype");
+    TraceType traceType = determineTraceType(cmd, hasInputRumenOption,
+        hasInputSlsOption, hasTraceTypeOption);
+    String traceLocation = determineTraceLocation(cmd, hasInputRumenOption,
+        hasInputSlsOption, hasTraceTypeOption);
+    
     String output = cmd.getOptionValue("output");
 
     File outputFile = new File(output);
@@ -586,31 +371,56 @@ public class SLSRunner extends Configured implements Tool {
     String tempNodeFile =
         cmd.hasOption("nodes") ? cmd.getOptionValue("nodes") : "";
 
-    TraceType tempTraceType;
+    String[] inputFiles = traceLocation.split(",");
+
+    setSimulationParams(traceType, inputFiles, tempNodeFile, output,
+        trackedJobSet, cmd.hasOption("printsimulation"));
+    
+    start();
+
+    return 0;
+  }
+
+  private TraceType determineTraceType(CommandLine cmd, boolean hasInputRumenOption,
+      boolean hasInputSlsOption, boolean hasTraceTypeOption) throws YarnException {
+    String traceType = null;
+    if (hasInputRumenOption) {
+      traceType = "RUMEN";
+    }
+    if (hasInputSlsOption) {
+      traceType = "SLS";
+    }
+    if (hasTraceTypeOption) {
+      traceType = cmd.getOptionValue("tracetype");
+    }
+    if (traceType == null) {
+      throw new YarnException("Misconfigured input");
+    }
     switch (traceType) {
     case "SLS":
-      tempTraceType = TraceType.SLS;
-      break;
+      return TraceType.SLS;
     case "RUMEN":
-      tempTraceType = TraceType.RUMEN;
-      break;
-
+      return TraceType.RUMEN;
     case "SYNTH":
-      tempTraceType = TraceType.SYNTH;
-      break;
+      return TraceType.SYNTH;
     default:
       printUsage();
       throw new YarnException("Misconfigured input");
     }
+  }
 
-    String[] inputFiles = traceLocation.split(",");
-
-    setSimulationParams(tempTraceType, inputFiles, tempNodeFile, output,
-        trackedJobSet, cmd.hasOption("printsimulation"));
-
-    start();
-
-    return 0;
+  private String determineTraceLocation(CommandLine cmd, boolean hasInputRumenOption,
+      boolean hasInputSlsOption, boolean hasTraceTypeOption) throws YarnException {
+    if (hasInputRumenOption) {
+      return cmd.getOptionValue("inputrumen");
+    }
+    if (hasInputSlsOption) {
+      return cmd.getOptionValue("inputsls");
+    }
+    if (hasTraceTypeOption) {
+      return cmd.getOptionValue("tracelocation");
+    }
+    throw new YarnException("Misconfigured input! ");
   }
 
   public static void main(String[] argv) throws Exception {
@@ -695,12 +505,12 @@ public class SLSRunner extends Configured implements Tool {
     }
   }
 
-  public ResourceManager getRm() {
-    return rm;
-  }
-
   public SynthTraceJobProducer getStjp() {
     return stjp;
+  }
+
+  public void setStjp(SynthTraceJobProducer stjp) {
+    this.stjp = stjp;
   }
 
   public AMSimulator getAMSimulatorByAppId(ApplicationId appId) {

@@ -44,8 +44,11 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.Reader;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -53,7 +56,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class AMRunner {
   private static final Logger LOG = LoggerFactory.getLogger(AMRunner.class);
-  static int REMAINING_APPS = 0;
+  int remainingApps = 0;
 
   private final Configuration conf;
   private int AM_ID;
@@ -63,9 +66,8 @@ public class AMRunner {
   private Map<String, Class> amClassMap;
   private TraceType inputType;
   private String[] inputTraces;
-  private SynthTraceJobProducer stjp;
-  private TaskRunner runner;
-  private SLSRunner slsRunner;
+  private final TaskRunner runner;
+  private final SLSRunner slsRunner;
   private int numAMs, numTasks;
   private long maxRuntime;
   private ResourceManager rm;
@@ -82,8 +84,8 @@ public class AMRunner {
     amClassMap = new HashMap<>();
     appIdAMSim = new ConcurrentHashMap<>();
     // <AMType, Class> map
-    for (Map.Entry e : conf) {
-      String key = e.getKey().toString();
+    for (Map.Entry<String, String> e : conf) {
+      String key = e.getKey();
       if (key.startsWith(SLSConfiguration.AM_TYPE_PREFIX)) {
         String amType = key.substring(SLSConfiguration.AM_TYPE_PREFIX.length());
         amClassMap.put(amType, Class.forName(conf.get(key)));
@@ -113,7 +115,7 @@ public class AMRunner {
     }
 
     numAMs = amMap.size();
-    REMAINING_APPS = numAMs;
+    remainingApps = numAMs;
   }
 
   /**
@@ -148,15 +150,15 @@ public class AMRunner {
   private void startAMFromSynthGenerator() throws YarnException, IOException {
     Configuration localConf = new Configuration();
     localConf.set("fs.defaultFS", "file:///");
-    // if we use the nodeFile this could have been not initialized yet.
-    if (stjp == null) {
-      stjp = new SynthTraceJobProducer(conf, new Path(inputTraces[0]));
+    //if we use the nodeFile this could have been not initialized yet.
+    if (slsRunner.getStjp() == null) {
+      slsRunner.setStjp(new SynthTraceJobProducer(conf, new Path(inputTraces[0])));
     }
 
     SynthJob job;
     // we use stjp, a reference to the job producer instantiated during node
     // creation
-    while ((job = (SynthJob) stjp.getNextJob()) != null) {
+    while ((job = (SynthJob) slsRunner.getStjp().getNextJob()) != null) {
       ReservationId reservationId = null;
       if (job.hasDeadline()) {
         reservationId = ReservationId
@@ -264,7 +266,7 @@ public class AMRunner {
   }
 
   public void setInputTraces(String[] inputTraces) {
-    this.inputTraces = inputTraces;
+    this.inputTraces = inputTraces.clone();
   }
 
   public void setResourceManager(ResourceManager rm) {
