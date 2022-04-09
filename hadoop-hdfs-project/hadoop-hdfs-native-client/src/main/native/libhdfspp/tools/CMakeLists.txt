@@ -49,8 +49,7 @@ add_subdirectory(hdfs-rm)
 
 add_subdirectory(hdfs-ls)
 
-add_executable(hdfs_stat hdfs_stat.cc)
-target_link_libraries(hdfs_stat tools_common hdfspp_static)
+add_subdirectory(hdfs-stat)
 
 add_subdirectory(hdfs-count)
 
@@ -64,8 +63,7 @@ add_subdirectory(hdfs-copy-to-local)
 
 add_subdirectory(hdfs-move-to-local)
 
-add_executable(hdfs_setrep hdfs_setrep.cc)
-target_link_libraries(hdfs_setrep tools_common hdfspp_static)
+add_subdirectory(hdfs-setrep)
 
 add_subdirectory(hdfs-allow-snapshot)
 
