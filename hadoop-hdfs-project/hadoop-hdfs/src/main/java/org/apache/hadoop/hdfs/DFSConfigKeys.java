@@ -123,6 +123,14 @@ public class DFSConfigKeys extends CommonConfigurationKeys {
       "dfs.datanode.data.write.bandwidthPerSec";
   // A value of zero indicates no limit
   public static final long DFS_DATANODE_DATA_WRITE_BANDWIDTHPERSEC_DEFAULT = 0;
+  public static final String DFS_DATANODE_EC_RECONSTRUCT_READ_BANDWIDTHPERSEC_KEY =
+      "dfs.datanode.ec.reconstruct.read.bandwidthPerSec";
+  public static final long DFS_DATANODE_EC_RECONSTRUCT_READ_BANDWIDTHPERSEC_DEFAULT =
+      0; // A value of zero indicates no limit
+  public static final String DFS_DATANODE_EC_RECONSTRUCT_WRITE_BANDWIDTHPERSEC_KEY =
+      "dfs.datanode.ec.reconstruct.write.bandwidthPerSec";
+  public static final long DFS_DATANODE_EC_RECONSTRUCT_WRITE_BANDWIDTHPERSEC_DEFAULT =
+      0; // A value of zero indicates no limit
   @Deprecated
   public static final String  DFS_DATANODE_READAHEAD_BYTES_KEY =
       HdfsClientConfigKeys.DFS_DATANODE_READAHEAD_BYTES_KEY;
@@ -475,11 +483,6 @@ public class DFSConfigKeys extends CommonConfigurationKeys {
   /** Pending period of block deletion since NameNode startup */
   public static final String  DFS_NAMENODE_STARTUP_DELAY_BLOCK_DELETION_SEC_KEY = "dfs.namenode.startup.delay.block.deletion.sec";
   public static final long    DFS_NAMENODE_STARTUP_DELAY_BLOCK_DELETION_SEC_DEFAULT = 0L;
-
-  /** Block deletion increment. */
-  public static final String DFS_NAMENODE_BLOCK_DELETION_INCREMENT_KEY =
-      "dfs.namenode.block.deletion.increment";
-  public static final int DFS_NAMENODE_BLOCK_DELETION_INCREMENT_DEFAULT = 1000;
 
   /** The limit of single lock holding duration.*/
   public static final String DFS_NAMENODE_BLOCK_DELETION_LOCK_THRESHOLD_MS =
