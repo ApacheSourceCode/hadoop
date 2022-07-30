@@ -21,6 +21,7 @@ package org.apache.hadoop.yarn.server.router.webapp;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.HashMap;
 
 import javax.ws.rs.core.Response;
 
@@ -49,6 +50,8 @@ import org.apache.hadoop.yarn.server.resourcemanager.webapp.dao.NodeInfo;
 import org.apache.hadoop.yarn.server.resourcemanager.webapp.dao.NodesInfo;
 import org.apache.hadoop.yarn.server.resourcemanager.webapp.dao.ResourceInfo;
 import org.apache.hadoop.yarn.server.resourcemanager.webapp.dao.ResourceOptionInfo;
+import org.apache.hadoop.yarn.server.resourcemanager.webapp.dao.NodeToLabelsInfo;
+import org.apache.hadoop.yarn.server.resourcemanager.webapp.dao.NodeLabelsInfo;
 import org.apache.hadoop.yarn.server.webapp.dao.ContainersInfo;
 import org.apache.hadoop.yarn.util.MonotonicClock;
 import org.junit.Assert;
@@ -61,7 +64,7 @@ import org.slf4j.LoggerFactory;
  * use the {@code RouterClientRMService} pipeline test cases for testing the
  * {@code FederationInterceptor} class. The tests for
  * {@code RouterClientRMService} has been written cleverly so that it can be
- * reused to validate different request intercepter chains.
+ * reused to validate different request interceptor chains.
  */
 public class TestFederationInterceptorREST extends BaseRouterWebServicesTest {
   private static final Logger LOG =
@@ -119,8 +122,8 @@ public class TestFederationInterceptorREST extends BaseRouterWebServicesTest {
     String mockPassThroughInterceptorClass =
         PassThroughRESTRequestInterceptor.class.getName();
 
-    // Create a request intercepter pipeline for testing. The last one in the
-    // chain is the federation intercepter that calls the mock resource manager.
+    // Create a request interceptor pipeline for testing. The last one in the
+    // chain is the federation interceptor that calls the mock resource manager.
     // The others in the chain will simply forward it to the next one in the
     // chain
     conf.set(YarnConfiguration.ROUTER_CLIENTRM_INTERCEPTOR_CLASS_PIPELINE,
@@ -239,7 +242,7 @@ public class TestFederationInterceptorREST extends BaseRouterWebServicesTest {
   }
 
   /**
-   * This test validates the correctness of SubmitApplication in case of of
+   * This test validates the correctness of SubmitApplication in case of
    * application in wrong format.
    */
   @Test
@@ -604,5 +607,23 @@ public class TestFederationInterceptorREST extends BaseRouterWebServicesTest {
     response = interceptor.getContainers(null, null, appId.toString(), "AppAttempt_wrong_id");
 
     Assert.assertTrue(response.getContainers().isEmpty());
+  }
+
+  @Test
+  public void testGetNodeToLabels() throws IOException {
+    NodeToLabelsInfo info = interceptor.getNodeToLabels(null);
+    HashMap<String, NodeLabelsInfo> map = info.getNodeToLabels();
+    Assert.assertNotNull(map);
+    Assert.assertEquals(2, map.size());
+
+    NodeLabelsInfo node1Value = map.getOrDefault("node1", null);
+    Assert.assertNotNull(node1Value);
+    Assert.assertEquals(1, node1Value.getNodeLabelsName().size());
+    Assert.assertEquals("CPU", node1Value.getNodeLabelsName().get(0));
+
+    NodeLabelsInfo node2Value = map.getOrDefault("node2", null);
+    Assert.assertNotNull(node2Value);
+    Assert.assertEquals(1, node2Value.getNodeLabelsName().size());
+    Assert.assertEquals("GPU", node2Value.getNodeLabelsName().get(0));
   }
 }
